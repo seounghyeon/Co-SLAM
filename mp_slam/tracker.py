@@ -147,7 +147,6 @@ class Tracker():
             
             self.update_params()
             self.tracking_render(batch, idx)  
-            
             self.tracking_idx[0] = idx
 
 

@@ -317,3 +317,34 @@ class JointEncoding(nn.Module):
         }
 
         return ret
+
+
+
+    def forward_other(self, rays_o, rays_d, target_d):
+        '''
+        Params:
+            rays_o: ray origins (Bs, 3)
+            rays_d: ray directions (Bs, 3)
+            frame_ids: use for pose correction (Bs, 1)
+            target_rgb: rgb value (Bs, 3)
+            target_d: depth value (Bs, 1)
+            c2w_array: poses (N, 4, 4) 
+             r r r tx
+             r r r ty
+             r r r tz
+        '''
+
+        # Get render results
+        rend_dict = self.render_rays(rays_o, rays_d, target_d=target_d)
+
+        if not self.training:
+            return rend_dict
+        
+
+        ret = {
+            "rgb": rend_dict["rgb"],
+            "depth": rend_dict["depth"],
+
+        }
+
+        return ret
