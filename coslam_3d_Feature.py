@@ -25,7 +25,7 @@ from tools.eval_ate import pose_evaluation
 from optimization.utils import at_to_transform_matrix, qt_to_transform_matrix, matrix_to_axis_angle, matrix_to_quaternion
 
 from feature_match.sift import SIFTMatcher
-from feature_match.common_f import get_rays_from_uv, ray_to_3D, proj_3D_2D, img_pre, proj_3D_2D_cur, render_surface_color, save_img, uv_to_ray, proj_3D_2D_WORKS, uv_to_index, remove_rows
+from feature_match.common_f import get_rays_from_uv, ray_to_3D, proj_3D_2D, img_pre, proj_3D_2D_cur, render_surface_color, save_img, uv_to_ray, proj_3D_2D_WORKS
 from feature_match.loss import huber_loss_sum, huber_loss, huber_loss_norm
 
 class CoSLAM():
@@ -239,6 +239,7 @@ class CoSLAM():
         for i in range(self.config['mapping']['cur_frame_iters']):
             self.cur_map_optimizer.zero_grad()
             indice = self.select_samples(self.dataset.H, self.dataset.W, self.config['mapping']['sample'])
+            
             indice_h, indice_w = indice % (self.dataset.H), indice // (self.dataset.H)
             rays_d_cam = batch['direction'].squeeze(0)[indice_h, indice_w, :].to(self.device)
             target_s = batch['rgb'].squeeze(0)[indice_h, indice_w, :].to(self.device)
@@ -362,6 +363,7 @@ class CoSLAM():
             rays_o = poses_all[ids_all, None, :3, -1].repeat(1, rays_d.shape[1], 1).reshape(-1, 3)
             rays_d = rays_d.reshape(-1, 3)
 
+
             ret = self.model.forward(rays_o, rays_d, target_s, target_d)
 
             loss = self.get_loss_from_ret(ret, smooth=True)
@@ -424,8 +426,8 @@ class CoSLAM():
 
     # TRACKER
     def tracking_render(self, batch, frame_id, gt_color_prev, gt_depth_prev, i_prev, j_prev, i_cur, j_cur, 
-                        gt_depth_prev_batch_sift, gt_depth_batch_sift, gt_color_sift, colors_prev, gt_depth, gt_color, 
-                        W1, H0, uv_cur, uv_prev, gt_color_clone, gt_depth_batch_sift2, m_i, m_j, prev_c2w, gt_depth_inside, width_small, height_small, index_cur, index_prev):
+                        gt_depth_prev_batch_sift, gt_depth_batch_sift, gt_color_c, gt_depth, gt_color, 
+                        W1, H0, uv_cur, uv_prev, gt_color_clone, gt_depth_batch_sift2, m_i, m_j,prev_c2w):
         '''
         Tracking camera pose using of the current frame
         Params:
@@ -470,9 +472,6 @@ class CoSLAM():
         iH = self.config['tracking']['ignore_edge_H']
 
         cur_rot, cur_trans, pose_optimizer = self.get_pose_param_optim(cur_c2w[None,...], mapping=False)
-
-        prev_rays_o = None
-        prev_rays_d = None
         # Start tracking
         for i in range(self.config['tracking']['iter']):
             pose_optimizer.zero_grad()
@@ -482,22 +481,21 @@ class CoSLAM():
             # Note here we fix the sampled points for optimisation
             if indice is None:
                 indice = self.select_samples(self.dataset.H-iH*2, self.dataset.W-iW*2, self.config['tracking']['sample'])
+            
                 # Slicing
-                indice = torch.cat((indice, index_cur))             # index added
-                indice_w, indice_h = indice % (self.dataset.W - iW * 2), indice // (self.dataset.W - iW * 2)
+                indice_h, indice_w = indice % (self.dataset.H - iH * 2), indice // (self.dataset.H - iH * 2)
                 rays_d_cam = batch['direction'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device)
             target_s = batch['rgb'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device)
             target_d = batch['depth'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
 
-            # print("target d last 10 ", target_d[-10:])
-            # print("gt_depth_batch_sift d last 10 ", gt_depth_batch_sift[-10:])
 
-            rays_o = c2w_est[...,:3, -1].repeat(self.config['tracking']['sample']+ index_cur.numel(), 1)
+
+            rays_o = c2w_est[...,:3, -1].repeat(self.config['tracking']['sample'], 1)
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1)
-
-
-            
-            # # print("loss PURE ", loss)
+            # print("SIZE Of RAYS O ", rays_o.shape)
+            ret = self.model.forward(rays_o, rays_d, target_s, target_d)
+            loss = self.get_loss_from_ret(ret)
+            # print("loss PURE ", loss)
 
             # 2d loss
             rays_o_cur, rays_d_cur = get_rays_from_uv(i_cur, j_cur, c2w_est, H, W, fx, fy, cx, cy, device)
@@ -505,47 +503,14 @@ class CoSLAM():
             point_3D_current = ray_to_3D(rays_o_cur, rays_d_cur, gt_depth_batch_sift, gt_depth)
             point_3D_prev = ray_to_3D(rays_o_prev, rays_d_prev, gt_depth_prev_batch_sift, gt_depth_prev)
 
-
-
             uv_prev_in_cur = proj_3D_2D_cur(point_3D_prev, W1, H0, Wedge, fx, fy, cx, cy, c2w_est, self.device)  # is float
-            # print("uv_prev_in_cur:\n ", uv_prev_in_cur[:10].round())
-
-            # uv_curcur = proj_3D_2D_cur(point_3D_current, W1, H0, Wedge, fx, fy, cx, cy, c2w_est, self.device)  # is float
-            # print("uv_curcur:\n ", uv_curcur[:10].round())
+            uv_curcur = proj_3D_2D_cur(point_3D_current, W1, H0, Wedge, fx, fy, cx, cy, c2w_est, self.device)  # is float
 
 
             gt_depth_batch_sift_changed = gt_depth_batch_sift.unsqueeze(-1)
-
             gt_depth_prev_batch_sift_changed = gt_depth_prev_batch_sift.unsqueeze(-1)
 
-            uv_prev_in_cur_detached = uv_prev_in_cur.clone()
 
-            #  index_cur, index_prev
-            indice_h_cur, indice_w_cur = index_cur % (self.dataset.H - iH * 2), index_cur // (self.dataset.H - iH * 2)
-
-
-            target_s_2 = batch['rgb'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h_cur, indice_w_cur, :].to(self.device)
-            target_d_2 = batch['depth'].squeeze(0)[iH:-iH, iW:-iW][indice_h_cur, indice_w_cur].to(self.device).unsqueeze(-1)
-
-
-            index_inside, removed_indices = uv_to_index(uv_prev_in_cur_detached, width_small, height_small)
-            # print("removed index ", removed_indices)
-            # print("uv prev in cur FULL ", uv_prev_in_cur_detached[:200])
-            # print("index inside ", index_inside[:200])
-            gt_depth_inside_changed = gt_depth_inside[index_inside]  # (n)
-            gt_depth_inside_changed = gt_depth_inside_changed.unsqueeze(-1)
-
-            # print("gt_depth sinide  1", gt_depth_inside_changed)
-            i_p_in_c = m_i[index_inside]  
-            j_p_in_c = m_j[index_inside]
-
-
-            rays_o_inside, rays_d_inside = get_rays_from_uv(i_p_in_c, j_p_in_c, c2w_est, H, W, fx, fy, cx, cy, device)
-
-            # # TEST if reprojection correct
-            # point_inside = ray_to_3D(rays_o_inside, rays_d_inside, gt_depth_inside_changed, gt_depth)
-            # uv_inside = proj_3D_2D_cur(point_inside, W1, H0, Wedge, fx, fy, cx, cy, c2w_est, self.device)  # is float
-            # print("uv inside reprojected ", uv_inside[:10])
 
 
             # rays_o_pic, rays_d_pic, index_uv_prev_in_cur = uv_to_ray(uv_prev_in_cur, gt_color, m_i, m_j, c2w_est, H, W, fx, fy, cx, cy, device)
@@ -554,51 +519,24 @@ class CoSLAM():
             # index_prev, index_cur,
             # print("target d ", target_d.shape)
 
-
-
-
-
-
-
-            # from prev in current 2D color
-            ret_own, sdf_prev_loss = self.model.forward_other(rays_o_inside, rays_d_inside, gt_depth_inside_changed)
+            # prev 2D color
+            ret_own, prev_sdf_loss= self.model.forward_other(rays_o_prev, rays_d_prev, gt_depth_prev_batch_sift_changed)
             rgb_rendered = ret_own["rgb"]
             scaled_rgb_rendered = (rgb_rendered * 255).to(dtype=torch.float32)
-            # print("rays d inside ", rays_d_inside[:10])
-
-
-
-            # prev 2D color
-            ret_own_prev, prev_sdf_loss = self.model.forward_other(rays_o_prev, rays_d_prev, gt_depth_prev_batch_sift_changed)
-            rgb_rendered_prev = ret_own_prev["rgb"]
-            scaled_rgb_rendered_prev = (rgb_rendered_prev * 255).to(dtype=torch.float32)
-            # print("scaled_rgb_rendered_prev ", scaled_rgb_rendered_prev[:10])
-
 
             # current 2D color
-            ret_own_current, cur_sdf_loss = self.model.forward_other(rays_o_cur, rays_d_cur, gt_depth_batch_sift_changed)
+            ret_own_current, cur_sdf_loss = self.model.forward_other(rays_d_cur, rays_d_cur, gt_depth_batch_sift_changed)
             rgb_rendered_cur = ret_own_current["rgb"]
             scaled_rgb_rendered_cur = (rgb_rendered_cur * 255).to(dtype=torch.float32)
 
 
-
-            # ###########################################################################################################
-            # # if len(removed_indices) != 0:
-            # #     scaled_rgb_rendered_cur = remove_rows(scaled_rgb_rendered_cur, removed_indices)
-
-
-            n_samples = rays_d.shape[0]
-
-
-
-
-            # print("rays o inside ", scaled_rgb_rendered[:10])
+            # print("2D COLOR OUT ", scaled_rgb_rendered.shape)
             # print("gt color c ", gt_color_c[:10])
-            # print("scaled_rgb_rendered ", scaled_rgb_rendered_cur[:10])
+            # print("scaled_rgb_rendered ", scaled_rgb_rendered[:10])
 
             # print("sdf_prev_loss ", sdf_prev_loss.shape)
 
-            color_cur_copy = gt_color_sift.clone()
+            color_cur_copy = gt_color_c.clone()
             color_cur_2D = color_cur_copy[:, :3]
 
             color_cur_2D = torch.clamp(color_cur_2D, 0, 1)
@@ -606,28 +544,18 @@ class CoSLAM():
             # If color values are in [0,1], scale to [0,255]
             if color_cur_2D.max() <= 1.0:
                 color_cur_2D = (color_cur_2D * 255).to(torch.uint8)
-            # print("gt_color_c/255 ", gt_color_sift[:10])
-            # print("target_s ", target_s[:10])
-
-            # rays_o = torch.cat((rays_o, rays_o_cur), dim=0)
-            # rays_d = torch.cat((rays_d, rays_d_cur), dim=0)
-            # target_s = torch.cat((target_s, gt_color_sift), dim=0) 
-            # target_d = torch.cat((target_d, gt_depth_batch_sift_changed), dim=0) 
 
 
 
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d)
-            loss = self.get_loss_from_ret(ret)
-
-            # loss_2d_color = huber_loss(colors_prev, scaled_rgb_rendered_cur, delta=1)* 0.0005
+            loss_2d_color = huber_loss(scaled_rgb_rendered, gt_color_c, delta=1)* 0.005
 
 
 
-            # loss_2d =  huber_loss(uv_cur, uv_prev_in_cur, delta=1) * 0.001
+            loss_2d =  huber_loss(uv_cur, uv_prev_in_cur, delta=1) * 0.01
 
 
 
-       
+
 
             if best_sdf_loss is None:
                 best_sdf_loss = loss.cpu().item()
@@ -646,13 +574,13 @@ class CoSLAM():
             if thresh >self.config['tracking']['wait_iters']:
                 break
 
-            # print("super vis ", loss)
-            # # print("loss_2d ", loss_2d)
-            # print("2D COLOR LOSS ", loss_2d_color)
+            print("super vis ", loss)
+            print("loss_2d ", loss_2d)
+            print("2D COLOR LOSS ", loss_2d_color)
 
 
 
-            loss = loss 
+            loss = loss + loss_2d + loss_2d_color 
             print("loss ", loss)
 
 
@@ -662,8 +590,6 @@ class CoSLAM():
             loss.backward()
             pose_optimizer.step()
 
-        prev_rays_o = rays_o_cur[self.config['tracking']['sample']:]
-        prev_rays_d = rays_d_cur[self.config['tracking']['sample']:]
         prev_c2w = best_c2w_est.detach().clone()[0]
 
         if self.config['tracking']['best']:
@@ -759,8 +685,7 @@ class CoSLAM():
         H1 = H-Hedge
         W0 = Wedge 
         W1 = W-Wedge 
-        width_small = W-2*Wedge
-        height_small = H-2*Hedge
+
         # Start Co-SLAM!
         for i, batch in tqdm(enumerate(data_loader)):
 
@@ -800,9 +725,7 @@ class CoSLAM():
                 gt_color_clone = gt_color.clone().detach()
                 gt_color_prev_clone = gt_color_prev_clone[H0:H1, W0:W1]
                 gt_color_clone = gt_color_clone[H0:H1, W0:W1]
-                gt_color_clone2 = gt_color_clone.clone().detach()
 
-                gt_color_clone2 = gt_color_clone2.reshape(-1,3)
                 gt_depth_prev_clone = gt_depth_prev.clone().detach()
                 gt_depth_prev_clone = gt_depth_prev_clone[H0:H1, W0:W1]
 
@@ -824,9 +747,9 @@ class CoSLAM():
 
                 # color_cur = color_cur[H0:H1, W0:W1]    
                 # color_prev = color_prev[H0:H1, W0:W1]
-                uv_prev, uv_cur, index_prev, index_cur, colors_cur, colors_prev = sift_matcher.match(gt_color_prev_clone, gt_color_clone, i)
+                uv_prev, uv_cur, index_prev, index_cur, colors_cur = sift_matcher.match(gt_color_prev_clone, gt_color_clone, i)
                 # print("colors_cur outside size: ", colors_cur.shape)
-                # print("uv cur from match: ", colors_cur[:10]/255)
+
 
                 i_prev = m_i[index_prev]  
                 j_prev = m_j[index_prev]  
@@ -834,8 +757,12 @@ class CoSLAM():
                 i_cur = m_i[index_cur]  
                 j_cur = m_j[index_cur]  
 
+
                 gt_depth_prev_batch_sift = gt_depth_prev[H0:H1, W0:W1]
+
                 gt_depth_batch_sift = gt_depth[H0:H1, W0:W1]
+                
+                
                 gt_depth_batch_sift2 = gt_depth_batch_sift
                 gt_depth_batch_sift2 = gt_depth_batch_sift2.reshape(-1)
 
@@ -849,12 +776,9 @@ class CoSLAM():
                 gt_depth_batch_sift = gt_depth_batch_sift[index_cur]  # (n)
 
 
-                gt_color_sift = gt_color_clone2[index_cur]  # (n)
 
                 prev_c2w = self.tracking_render(batch, i, gt_color_prev, gt_depth_prev, i_prev, j_prev, i_cur, j_cur, 
-                                     gt_depth_prev_batch_sift, gt_depth_batch_sift, gt_color_sift, colors_prev, gt_depth, gt_color, 
-                                     W1, H0, uv_cur, uv_prev, gt_color_clone, gt_depth_batch_sift2, m_i, m_j, prev_c2w, gt_depth_clone, 
-                                     width_small, height_small, index_cur, index_prev)
+                                     gt_depth_prev_batch_sift, gt_depth_batch_sift, colors_cur, gt_depth, gt_color, W1, H0, uv_cur, uv_prev, gt_color_clone, gt_depth_batch_sift2, m_i, m_j, prev_c2w)
 
 
                 if i%self.config['mapping']['map_every']==0:

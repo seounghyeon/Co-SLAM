@@ -34,12 +34,51 @@ def ray_to_3D(batch_rays_o, batch_rays_d, batch_gt_depth, gt_depth):
     changing 0 depth into max depth
     0 depth means no depth information 
     """
-    s_depth = batch_gt_depth
+    s_depth = batch_gt_depth.detach().clone()
     s_depth     = replace_zero_depth(batch_gt_depth, gt_depth)
     # 3D coordinates projected from the previous and current image
     point_3D    = batch_rays_o + batch_rays_d * s_depth.unsqueeze(1) # output size is [100,3] torch.float32
 
     return point_3D
+
+# def depth_from_3D(batch_rays_o, point_3D):
+#     """
+#     Calculate depth values from 3D coordinates and ray origins.
+
+#     Args:
+#         batch_rays_o (torch.Tensor): Batch of ray origins, shape [batch_size, 3].
+#         point_3D (torch.Tensor): 3D coordinates, shape [batch_size, 3].
+
+#     Returns:
+#         torch.Tensor: Depth values, shape [batch_size].
+#     """
+#     # Calculate the direction vectors
+#     ray_directions = point_3D - batch_rays_o.unsqueeze(1)
+
+#     # Calculate depth values as the magnitude of the direction vectors
+#     batch_gt_depth = torch.norm(ray_directions, dim=2)
+
+#     return batch_gt_depth
+
+def depth_from_3D(point_3D, batch_rays_o, batch_rays_d):
+    """
+    Calculate depth values for 3D points given rays and 3D coordinates.
+    """
+
+    # Ensure all inputs are on the same device
+    device = point_3D.device
+
+    # Calculate direction vectors for rays
+    rays_d_normalized = batch_rays_d / torch.norm(batch_rays_d, dim=1, keepdim=True)
+
+    # Calculate direction vectors from camera to each 3D point
+    point_to_cam = point_3D - batch_rays_o
+
+    # Calculate depth for each 3D point along the rays
+    depth = torch.sum(point_to_cam * rays_d_normalized, dim=1)
+
+    return depth
+
 
 
 def proj_3D_2D(points, W, H, fx, fy, cx, cy, c2w, device):
@@ -332,3 +371,179 @@ def uv_to_ray(uv, gt_color, m_i, m_j, c2w, H, W, fx, fy, cx, cy, device):
     rays_o, rays_d = get_rays_from_uv(i_t, j_t, c2w, H, W, fx, fy, cx, cy, device)
 
     return rays_o, rays_d, index
+
+
+
+
+def proj_3D_2D_WORKS(points, W, H, fx, fy, cx, cy, c2w, device):
+    """
+    projects 3D points into 2D space at pose given by c2w
+    input args:
+        - points: torch tensor of 3D points Nx3
+        - fx fy cx cy intrinsic camera params
+        - c2w camera pose for the image
+        - W is the cropped image size since x y are flipped
+        - H is the hedge
+    output: 
+        - uv coordinates (N,2)
+    """
+    # Define the concatenation tensor for [0, 0, 0, 1]
+    # concat_tensor = torch.tensor([0, 0, 0, 1], device=device, dtype=c2w.dtype)      # is torch.float32
+    # Clone c2w to ensure we don't modify the original tensor
+
+    # Concatenate [0, 0, 0, 1] to the copied tensor
+    # c2w = torch.cat([c2w, concat_tensor.unsqueeze(0)], dim=0)
+    print("c2w INSIDE ", c2w)
+
+    c2w[:3, 1] *= -1.0
+    c2w[:3, 2] *= -1.0
+
+    # Calculate the world-to-camera transformation matrix w2c
+    w2c = torch.inverse(c2w)
+
+    # Camera intrinsic matrix K
+    K = torch.tensor([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=c2w.dtype, device=device)
+
+    # Convert points to homogeneous coordinates
+    ones = torch.ones_like(points[:, 0], device=device).unsqueeze(1)
+    homo_points = torch.cat([points, ones], dim=1).unsqueeze(2)
+
+    # Transform points to camera coordinates
+    cam_cord_homo = torch.matmul(w2c, homo_points)
+
+    # Remove the homogeneous coordinate
+    cam_cord = cam_cord_homo[:, :3, :]
+
+    cam_cord[:, 0] *= -1
+
+    # Project points to image plane
+    uv = torch.matmul(K, cam_cord)
+
+    z = uv[:, -1:] + 1e-5
+    uv = uv[:, :2] / z
+
+
+    # Apply the correct transformation to uv coordinates
+    uv[:, 0] = W - uv[:, 0] - 1
+    # uv[:, 1] = H - uv[:, 1]
+    uv[:, 1] = uv[:, 1] - H
+
+    # print("these are the points size: \n", points.size())
+    # print("uv.size: ", uv.size())
+    num_points = points.size(0)
+    uv = uv.view(num_points, 2)
+    
+    return uv
+
+
+
+def uv_to_index(uv_coord, width, height):
+    """
+    Convert UV coordinates to index.
+    throws out index which is too large or too small with a filter
+    Args:
+    - uv_coord tensor
+    - width (int): Width of the image.
+
+    Returns:
+    - int: Index corresponding to the UV coordinates.
+    """
+    u = uv_coord[:, 0]  # First column (u)
+    v = uv_coord[:, 1]  # Second column (v)    u = torch.round(u)    
+    u = u.to(torch.int64)
+    v = v.to(torch.int64)
+    index_1 = (v * width) + u
+    index_1 = index_1.cpu()
+    # print("index 1 ", index_1[:200])
+    # print("index 1 ", index_1.shape)
+
+  # Filter out indices that are out of bounds
+    valid_indices_mask = (index_1 >= 0) & (index_1 < width * height)
+    filtered_indices = index_1[valid_indices_mask]
+    # removed_indices = [(i, index_1[i]) for i in range(len(index_1)) if not valid_indices_mask[i]]
+    removed_indices = torch.tensor([i for i in range(len(index_1)) if not valid_indices_mask[i]], dtype=torch.int64)
+    return filtered_indices, removed_indices
+
+def remove_rows(tensor, removed_indices):
+    """
+    Removes rows from a PyTorch tensor.
+
+    Args:
+    - tensor (torch.Tensor): Input tensor from which rows will be removed.
+    - removed_indices (list): List of integers representing indices of rows to be removed.
+
+    Returns:
+    - torch.Tensor: Tensor with specified rows removed.
+    """
+    if not isinstance(tensor, torch.Tensor):
+        raise TypeError("Input 'tensor' must be a PyTorch tensor.")
+    
+    if not isinstance(removed_indices, list):
+        raise TypeError("Input 'removed_indices' must be a list of integers.")
+    
+    if not all(isinstance(idx, int) for idx in removed_indices):
+        raise TypeError("All elements of 'removed_indices' must be integers.")
+    
+    if max(removed_indices) >= tensor.size(0):
+        raise ValueError("Indices in 'removed_indices' exceed tensor dimensions.")
+    
+    # Create a mask to keep rows not in removed_indices
+    mask = torch.ones(tensor.size(0), dtype=torch.bool)
+    mask[removed_indices] = False
+
+    # Use the mask to select rows
+    result = tensor[mask]
+    
+    return result
+
+def filter_3D_points(pic_filtered, points3d):
+    """
+    Filter 3D_points based on pic_filtered.
+    """
+
+    # Get indices of rows to remove
+    indices_to_remove = pic_filtered
+
+    # Create a tensor of indices to retain
+    retain_indice = torch.arange(points3d.shape[0])
+
+    # Remove the indices specified in pic_filtered
+    retain_indice = torch.tensor([i for i in range(points3d.shape[0]) if i not in indices_to_remove])
+
+    # Use boolean masking to select rows to keep
+    filtered_points = points3d[retain_indice]
+
+
+    return filtered_points
+
+def filter_rays(pic_filtered, rays_d_cam_pic, rays_o_pic, rays_d_pic, target_s_pic, target_d_pic):
+    """
+    Filter rays_d_cam_pic based on pic_filtered.
+    """
+    print("rays_o inside site ", rays_d_pic.shape)
+    # Remove rows from rays_d_cam_pic based on pic_filtered
+    rays_d_cam_pic = rays_d_cam_pic[~pic_filtered]
+    rays_o_pic = rays_o_pic[~pic_filtered]
+    rays_d_pic = rays_d_pic[~pic_filtered]
+    target_s_pic = target_s_pic[~pic_filtered]
+    target_d_pic = target_d_pic[~pic_filtered]
+    print("rays_o2 inside site ", rays_d_pic.shape)
+
+    return rays_d_cam_pic, rays_o_pic, rays_d_pic, target_s_pic, target_d_pic
+
+def compare_depth(depth_batch, point_depth, rgb_rendered_cur, prev_rgb_eval_c, target_d_cur):
+    # Compute the error range (plus 10%)
+    depth_batch = depth_batch.squeeze()
+    # error_range = 0.1 * point_depth
+    error_range = 0
+
+    # print("error range ", error_range+point_depth)
+    # Check which elements of non_fixed_tensor fall within the error range or are smaller
+    within_range = (depth_batch <= point_depth + error_range) 
+    # print("within range ", within_range)
+    # Count the number of elements within the range for each element in fixed_tensor
+    depth_batch = depth_batch[within_range]
+    rgb_rendered_cur = rgb_rendered_cur[within_range]
+    prev_rgb_eval_c = prev_rgb_eval_c[within_range]
+    target_d_cur = target_d_cur[within_range]
+    return rgb_rendered_cur, prev_rgb_eval_c, target_d_cur

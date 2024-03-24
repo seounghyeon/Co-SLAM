@@ -22,7 +22,7 @@ class SIFTMatcher:
         self.device = torch.device("cuda")
 
 
-    def match(self, image1in, image2in, idx):
+    def match(self, image1in, image2in, idx, Hedge, Wedge):
         # print("inside match")
 
 
@@ -135,8 +135,6 @@ class SIFTMatcher:
         u_reshaped_2 = torch.tensor([keypoints_2[mat.trainIdx].pt[0] for mat in matches], dtype=torch.int64, device=self.device)
         v_reshaped_2 = torch.tensor([keypoints_2[mat.trainIdx].pt[1] for mat in matches], dtype=torch.int64, device=self.device)
 
-
-
         uv_2 = torch.stack((u_reshaped_2, v_reshaped_2), dim=1)
         
         
@@ -150,16 +148,16 @@ class SIFTMatcher:
             print("v kp2 first 10: ",v_reshaped_1[:10])
             print("kp2 first 10:", uv_1[:10])
 
-            # shows image 2 with the first 10 keypoints of the matches 
-            for uv in uv_2[:10]:
-                u, v = int(uv[0]), int(uv[1])
-                cv2.circle(image2, (u, v), radius=10, color=(0, 255, 0), thickness=-1)  # Draw a green circle
-            #cv2.imshow('image2', image2)
+            # # shows image 2 with the first 10 keypoints of the matches 
+            # for uv in uv_2[:10]:
+            #     u, v = int(uv[0]), int(uv[1])
+            #     cv2.circle(image2, (u, v), radius=10, color=(0, 255, 0), thickness=-1)  # Draw a green circle
+            # #cv2.imshow('image2', image2)
 
 
-            for uv in uv_1[:10]:
-                u, v = int(uv[0]), int(uv[1])
-                cv2.circle(image1, (u, v), radius=10, color=(0, 255, 0), thickness=-1)  # Draw a green circle
+            # for uv in uv_1[:10]:
+            #     u, v = int(uv[0]), int(uv[1])
+            #     cv2.circle(image1, (u, v), radius=10, color=(0, 255, 0), thickness=-1)  # Draw a green circle
 
 
         # starts at Wedge is 20
@@ -171,7 +169,7 @@ class SIFTMatcher:
 
 
         # print("IMAGE SHAPE ",image1.shape[0], image1.shape[1])          # (420, 580, 3) with -20 on each side and top and bottom
-
+    
 
         # (row(u) * width) + col(v) computes the index of uv coord (in the 1D tensor)
         W1 = image1.shape[1]
@@ -213,13 +211,18 @@ class SIFTMatcher:
 
         # Draw and display the first 100 matches
         # print("kp1_sort type and shape:", type(keypoints_2))
-        matched_image = cv2.drawMatches(image1, keypoints_1, image2, keypoints_2, matches[:100], None, flags=2)
-        cv2.imwrite(f'/home/shham/Pictures/cs_match/match_{idx}.jpg', matched_image)
-        cv2.imwrite(f'/home/shham/Pictures/cs_match2/match_{idx}_1.jpg', image1)
+        matched_image = cv2.drawMatches(image1, keypoints_1, image2, keypoints_2, matches[198:201], None, flags=2)
+        # cv2.imwrite(f'/home/shham/Pictures/cs_match/match_{idx}.jpg', matched_image)
+        # cv2.imwrite(f'/home/shham/Pictures/cs_match2/match_{idx}_1.jpg', image1)
 
-        cv2.imwrite(f'/home/shham/Pictures/cs_match2/match_{idx}.jpg', image2)
+        # cv2.imwrite(f'/home/shham/Pictures/cs_match2/match_{idx}.jpg', image2)
         uv_1 = uv_1.to(torch.float32)
         uv_2 = uv_2.to(torch.float32)
+
+
+
+
+
 
 
 
@@ -234,9 +237,17 @@ class SIFTMatcher:
 
         # print("colors of uv prev in sift: ", colors_1[:10])
 
-        # print("uv cur in sift : ", type(uv_2))
+
+        # for uncropped frame uv coordinate calculation current frame
+        u_full = u_reshaped_1 + Wedge
+        v_full = v_reshaped_1 + Hedge
+        Width = W1 + 2*Wedge
+        index_full = (v_full * W1) + u_full
 
 
+        u_reshaped_1 = torch.tensor([keypoints_1[mat.queryIdx].pt[0] for mat in matches], dtype=torch.int64, device=self.device)
+        v_reshaped_1 = torch.tensor([keypoints_1[mat.queryIdx].pt[1] for mat in matches], dtype=torch.int64, device=self.device)
 
-        return uv_1, uv_2, index_1, index_2, colors_2
+
+        return uv_1, uv_2, index_1, index_2, colors_2, colors_1, index_full
 

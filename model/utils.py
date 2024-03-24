@@ -147,3 +147,44 @@ def get_sdf_loss(z_vals, target_d, predicted_sdf, truncation, loss_type=None, gr
         return fs_loss, sdf_loss, eikonal_loss
 
     return fs_loss, sdf_loss
+
+
+
+def get_sdf_loss_prev(z_vals, target_d, predicted_sdf, truncation, loss_type=None, grad=None):
+    '''
+    Params:
+        z_vals: torch.Tensor, (Bs, N_samples)
+        target_d: torch.Tensor, (Bs,)
+        predicted_sdf: torch.Tensor, (Bs, N_samples)
+        truncation: float
+    Return:
+        fs_loss: torch.Tensor, (1,)
+        sdf_loss: torch.Tensor, (1,)
+        eikonal_loss: torch.Tensor, (1,)
+    '''
+    front_mask, sdf_mask, fs_weight, sdf_weight = get_masks(z_vals, target_d, truncation)
+
+    sdf_loss = compute_loss_prev((z_vals + predicted_sdf * truncation) * sdf_mask, target_d * sdf_mask, loss_type) * sdf_weight
+
+    if grad is not None:
+        eikonal_loss = (((grad.norm(2, dim=-1) - 1) ** 2) * sdf_mask / sdf_mask.sum()).sum()
+        return sdf_loss, eikonal_loss
+
+    return sdf_loss
+
+def compute_loss_prev(prediction, target, loss_type='l2'):
+    '''
+    Params: 
+        prediction: torch.Tensor, (Bs, N_samples)
+        target: torch.Tensor, (Bs, N_samples)
+        loss_type: str
+    Return:
+        loss: torch.Tensor, (1,)
+    '''
+
+    if loss_type == 'l2':
+        return F.mse_loss(prediction, target)
+    elif loss_type == 'l1':
+        return F.l1_loss(prediction, target)
+
+    raise Exception('Unsupported loss type')

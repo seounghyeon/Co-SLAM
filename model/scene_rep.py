@@ -5,7 +5,7 @@ import torch.nn as nn
 # Local imports
 from .encodings import get_encoder
 from .decoder import ColorSDFNet, ColorSDFNet_v2
-from .utils import sample_pdf, batchify, get_sdf_loss, mse2psnr, compute_loss
+from .utils import sample_pdf, batchify, get_sdf_loss, mse2psnr, compute_loss, get_sdf_loss_prev
 
 class JointEncoding(nn.Module):
     def __init__(self, config, bound_box):
@@ -265,7 +265,7 @@ class JointEncoding(nn.Module):
 
         return ret
     
-    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0):
+    def forward(self, rays_o, rays_d, target_rgb, target_d, batch_size, TR, global_step=0):
         '''
         Params:
             rays_o: ray origins (Bs, 3)
@@ -277,9 +277,20 @@ class JointEncoding(nn.Module):
              r r r tx
              r r r ty
              r r r tz
+
+        rend dict full renders all rays 
+        rend dict - only the Co-SLAM pipeline loss is calculated
         '''
 
         # Get render results
+        # only when tracker calls forward
+        if(TR == True):
+            rend_dict_full = self.render_rays(rays_o, rays_d, target_d=target_d)
+            rays_o = rays_o[:batch_size]
+            rays_d = rays_d[:batch_size]
+            target_rgb = target_rgb[:batch_size]
+            target_d = target_d[:batch_size]
+
         rend_dict = self.render_rays(rays_o, rays_d, target_d=target_d)
 
         if not self.training:
@@ -296,6 +307,7 @@ class JointEncoding(nn.Module):
         depth_loss = compute_loss(rend_dict["depth"].squeeze()[valid_depth_mask], target_d.squeeze()[valid_depth_mask])
 
         if 'rgb0' in rend_dict:
+            print("ASDASÖLKFJAÖLSKJFDLKÖASJDFLKASJDFÖL RGB0 ")
             rgb_loss += compute_loss(rend_dict["rgb0"]*rgb_weight, target_rgb*rgb_weight)
             depth_loss += compute_loss(rend_dict["depth0"][valid_depth_mask], target_d.squeeze()[valid_depth_mask])
         
@@ -306,16 +318,27 @@ class JointEncoding(nn.Module):
         fs_loss, sdf_loss = get_sdf_loss(z_vals, target_d, sdf, truncation, 'l2', grad=None)         
         
 
-        ret = {
-            "rgb": rend_dict["rgb"],
-            "depth": rend_dict["depth"],
-            "rgb_loss": rgb_loss,
-            "depth_loss": depth_loss,
-            "sdf_loss": sdf_loss,
-            "fs_loss": fs_loss,
-            "psnr": psnr,
-        }
+        if(TR == True):
+            ret = {
+                "rgb": rend_dict_full["rgb"],
+                "depth": rend_dict_full["depth"],
+                "rgb_loss": rgb_loss,
+                "depth_loss": depth_loss,
+                "sdf_loss": sdf_loss,
+                "fs_loss": fs_loss,
+                "psnr": psnr,
+            }
 
+        else:
+            ret = {
+                "rgb": rend_dict["rgb"],
+                "depth": rend_dict["depth"],
+                "rgb_loss": rgb_loss,
+                "depth_loss": depth_loss,
+                "sdf_loss": sdf_loss,
+                "fs_loss": fs_loss,
+                "psnr": psnr,
+            }
         return ret
 
 
@@ -335,7 +358,18 @@ class JointEncoding(nn.Module):
         '''
 
         # Get render results
-        rend_dict = self.render_rays(rays_o, rays_d, target_d=target_d)
+        rend_dict = self.render_rays(rays_o, rays_d, 0, target_d=target_d)
+
+
+        # Get sdf loss
+        z_vals = rend_dict['z_vals']  # [N_rand, N_samples + N_importance]
+        sdf = rend_dict['raw'][..., -1]  # [N_rand, N_samples + N_importance]
+        truncation = self.config['training']['trunc'] * self.config['data']['sc_factor']
+        # fs_loss, sdf_loss = get_sdf_loss(z_vals, target_d, sdf, truncation, 'l2', grad=None)         
+
+        sdf_loss = get_sdf_loss_prev(z_vals, target_d, sdf, truncation, 'l2', grad=None)         
+
+
 
         if not self.training:
             return rend_dict
@@ -347,4 +381,4 @@ class JointEncoding(nn.Module):
 
         }
 
-        return ret
+        return ret, sdf_loss
