@@ -22,10 +22,10 @@ class SIFTMatcher:
         self.device = torch.device("cuda")
 
 
-    def match(self, image1in, image2in, idx, Hedge, Wedge):
+    def match(self, image1in, image2in, idx, Hedge, Wedge, gt_color):
         # print("inside match")
 
-
+        debug_uv = False
         if image1in is None:
             print("\nTHIS IS NONE IN IMAGE1IN no previous image saved up\n\n")
             return None, None, None, None
@@ -35,6 +35,14 @@ class SIFTMatcher:
         image1in_cpu = image1in.cpu()
         image2in_cpu = image2in.cpu()
 
+        if (debug_uv):     
+            gt_color_cpu = gt_color.cpu()
+            np_gt_color = gt_color_cpu.numpy()
+            np_gt = np.clip(np_gt_color, 0, 1)
+            if np_gt.shape[0] == 3:
+                np_gt = np.transpose(np_gt, (1, 2, 0))
+            if np_gt.max() <= 1.0:
+                np_gt = (np_gt * 255).astype(np.uint8)
 
         # Convert to NumPy arrays
         np_img1 = image1in_cpu.numpy()
@@ -44,8 +52,6 @@ class SIFTMatcher:
         np_img1 = np.clip(np_img1, 0, 1)
         np_img2 = np.clip(np_img2, 0, 1)
 
-        # Check if the tensor shape is CxHxW, and if so, anspose it to HxWxC
-        # print("Shape of np_img2:", np_img2.shape)
         if np_img1.shape[0] == 3:
             np_img1 = np.transpose(np_img1, (1, 2, 0))
         if np_img2.shape[0] == 3:
@@ -59,10 +65,6 @@ class SIFTMatcher:
         image1 = np_img1
         image2 = np_img2
         ############################################
-        # print("image size in match: ", image1.shape)
-
-        # image1 = image1in
-        # image2 = image2in
   
         debug = False
 
@@ -70,7 +72,6 @@ class SIFTMatcher:
         keypoints_1, descriptors_1 = self.sift.detectAndCompute(image1, None)
         keypoints_2, descriptors_2 = self.sift.detectAndCompute(image2, None)
         # print("keypoints1 ", keypoints_1)
-        key = cv2.waitKey(0)
 
         # Create matches using brute force algorithm
         matches = self.brutef.match(descriptors_1, descriptors_2)
@@ -78,44 +79,10 @@ class SIFTMatcher:
         # Sort matches by their distance
         matches = sorted(matches, key=lambda x: x.distance)
 
-        #only save top 100 matches
-        # matches = matches[:100]
-
         # matches saved in tensor
         matches_tensor = torch.tensor([(match.queryIdx, match.trainIdx, match.distance) for match in matches], dtype=torch.float32)
         if(debug):
             print("size of matches",matches_tensor.size())
-
-        
-        # print("In sift H0, H1, W0, W1, are: ", H0, H1, W0, W1)
-
-
-
-        # both are 2D tensors with position encoded 
-        # u_coord for i/width/column
-        # v_coord for j/height/row information
-        # u_coord, v_coord = torch.meshgrid(torch.linspace(
-        #         W0, W1-1, W1-W0).to(self.device), torch.linspace(H0, H1-1, H1-H0).to(self.device))
-
-        # u_coord = u_coord.t()  # transpose
-        # v_coord = v_coord.t()
-
-        # u_coord = i
-        # v_coord = j
-
-        # if(debug):
-            # print("u_coord is: ",u_coord.size())
-            # print(u_coord[:10])                # printing tensor
-            # print("v_coord is: ",v_coord.size())
-            # print(v_coord[:10])                # printing tensor
-
-        # # reshape both into 1D tensors
-        # u_coord = u_coord.reshape(-1)
-        # v_coord = v_coord.reshape(-1)
-
-
-
-
 
         """
         UV NEEDS TO ADD 20 because the uv here starts at 0 but in reality it starts at 20
@@ -148,16 +115,16 @@ class SIFTMatcher:
             print("v kp2 first 10: ",v_reshaped_1[:10])
             print("kp2 first 10:", uv_1[:10])
 
-            # # shows image 2 with the first 10 keypoints of the matches 
-            # for uv in uv_2[:10]:
-            #     u, v = int(uv[0]), int(uv[1])
-            #     cv2.circle(image2, (u, v), radius=10, color=(0, 255, 0), thickness=-1)  # Draw a green circle
-            # #cv2.imshow('image2', image2)
+            # shows image 2 with the first 10 keypoints of the matches 
+            for uv in uv_2[:10]:
+                u, v = int(uv[0]), int(uv[1])
+                cv2.circle(image2, (u, v), radius=4, color=(0, 255, 0), thickness=-1)  # Draw a green circle
+            # cv2.imshow('image2', image2)
 
 
-            # for uv in uv_1[:10]:
-            #     u, v = int(uv[0]), int(uv[1])
-            #     cv2.circle(image1, (u, v), radius=10, color=(0, 255, 0), thickness=-1)  # Draw a green circle
+            for uv in uv_1[:10]:
+                u, v = int(uv[0]), int(uv[1])
+                cv2.circle(image1, (u, v), radius=4, color=(0, 255, 0), thickness=-1)  # Draw a green circle
 
 
         # starts at Wedge is 20
@@ -184,70 +151,48 @@ class SIFTMatcher:
 
         index_1 = index_1.cpu()
         index_2 = index_2.cpu()
-        # print("this is index2 in sift: ",index_2[:10])
 
 
-        # index_1 += 20
-        # index_2 += 20
+        if (debug_uv):     
+            matched_image = cv2.drawMatches(image1, keypoints_1, image2, keypoints_2, matches, None, flags=2)
+            cv2.imwrite(f'/home/shham/Pictures/cs_match/match_{idx}.jpg', matched_image)
+            cv2.imwrite(f'/home/shham/Pictures/cs_match/match_{idx}.jpg', matched_image)
+            cv2.imwrite(f'/home/shham/Pictures/cs_match2/match_{idx}_prev.jpg', image1)
 
-        # test_u =u_coord[index_1]
-        # test_v = v_coord[index_1]
-        # print("this is output of the index2: ",test_u[:10],test_v[:10])
-        # # check if recovery of index works correctly 
-        # # Recover UV coordinates from index_1
-        # u_coord_recovered = index_2 % W1
-        # v_coord_recovered = index_2 // W1
-
-        # # Create a tensor with recovered UV coordinates
-        # uv_recovered = torch.stack((u_coord_recovered, v_coord_recovered), dim=1)
-        # print("uv_recovered", uv_recovered[:10])
-
-
-
-        #?? not needed
-        # # Append to each list
-        # list_keypoints_1 = list(zip(u_reshaped_1, v_reshaped_1))
-        # list_keypoints_2 = [(int(keypoints_2[mat.trainIdx].pt[0]), int(keypoints_2[mat.trainIdx].pt[1])) for mat in matches]
-
-        # Draw and display the first 100 matches
-        # print("kp1_sort type and shape:", type(keypoints_2))
-        matched_image = cv2.drawMatches(image1, keypoints_1, image2, keypoints_2, matches[198:201], None, flags=2)
-        # cv2.imwrite(f'/home/shham/Pictures/cs_match/match_{idx}.jpg', matched_image)
-        # cv2.imwrite(f'/home/shham/Pictures/cs_match2/match_{idx}_1.jpg', image1)
-
-        # cv2.imwrite(f'/home/shham/Pictures/cs_match2/match_{idx}.jpg', image2)
+            cv2.imwrite(f'/home/shham/Pictures/cs_match2/match_{idx}.jpg', image2)
         uv_1 = uv_1.to(torch.float32)
         uv_2 = uv_2.to(torch.float32)
-
-
-
-
-
-
-
-
-
 
         # Extract colors from the images at the UV coordinates
         colors_1 = torch.tensor([image1[int(v), int(u)] for u, v in uv_1], dtype=torch.float32, device=self.device)
         colors_2 = torch.tensor([image2[int(v), int(u)] for u, v in uv_2], dtype=torch.float32, device=self.device)
 
+        # for uncropped frame uv coordinate calculation current frame
+        u_full = u_reshaped_2 + Wedge 
+        v_full = v_reshaped_2 + Hedge 
+        uv__full = torch.stack((u_full, v_full), dim=1)
 
-        # print("colors of uv cur in sift: ", colors_2[:10])
-
-        # print("colors of uv prev in sift: ", colors_1[:10])
+        Width = W1 + 2 * Wedge
+        index_full_cur = (v_full * Width) + u_full
 
 
         # for uncropped frame uv coordinate calculation current frame
-        u_full = u_reshaped_1 + Wedge
-        v_full = v_reshaped_1 + Hedge
-        Width = W1 + 2*Wedge
-        index_full = (v_full * W1) + u_full
+        u_full_p = u_reshaped_1 + Wedge 
+        v_full_p = v_reshaped_1 + Hedge 
+        uv__full_prev = torch.stack((u_full_p, v_full_p), dim=1)
 
+        index_full_prev = (v_full_p * Width) + u_full_p
+
+
+        if (debug_uv):     
+            for uv in uv__full[:10]:
+                u, v = int(uv[0]), int(uv[1])
+                cv2.circle(np_gt, (u, v), radius=4, color=(0, 255, 0), thickness=-1)  # Draw a green circle
+            cv2.imwrite(f'/home/shham/Pictures/gt_image/match_{idx}cur.jpg', np_gt)
 
         u_reshaped_1 = torch.tensor([keypoints_1[mat.queryIdx].pt[0] for mat in matches], dtype=torch.int64, device=self.device)
         v_reshaped_1 = torch.tensor([keypoints_1[mat.queryIdx].pt[1] for mat in matches], dtype=torch.int64, device=self.device)
 
 
-        return uv_1, uv_2, index_1, index_2, colors_2, colors_1, index_full
+        return uv_1, uv_2, index_1, index_2, colors_2, colors_1, index_full_cur, index_full_prev
 

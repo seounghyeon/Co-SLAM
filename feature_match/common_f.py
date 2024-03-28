@@ -547,3 +547,19 @@ def compare_depth(depth_batch, point_depth, rgb_rendered_cur, prev_rgb_eval_c, t
     prev_rgb_eval_c = prev_rgb_eval_c[within_range]
     target_d_cur = target_d_cur[within_range]
     return rgb_rendered_cur, prev_rgb_eval_c, target_d_cur
+
+
+def compute_cur_rays_and_targets(rays_o, rays_d, target_s, target_d, sample):
+    rays_o_cur = rays_o[sample:]
+    rays_d_cur = rays_d[sample:]
+    target_s_cur = target_s[sample:]
+    target_d_cur = target_d[sample:]
+    
+    return rays_o_cur, rays_d_cur, target_s_cur, target_d_cur
+
+
+def compute_points_and_uv_prev_in_cur(rays_o_cur, rays_d_cur, target_d_cur, rays_o_prev, rays_d_prev, target_d_prev, batch_depth, depth_prev, iH, iW, W1, H0, Wedge, fx, fy, cx, cy, c2w_est, device):
+    point_3D_current = ray_to_3D(rays_o_cur, rays_d_cur, target_d_cur.squeeze(), batch_depth.squeeze(0)[iH:-iH, iW:-iW])
+    point_3D_prev = ray_to_3D(rays_o_prev, rays_d_prev, target_d_prev.squeeze(), depth_prev.squeeze(0)[iH:-iH, iW:-iW])
+    uv_prev_in_cur = proj_3D_2D_cur(point_3D_prev, W1, H0, Wedge, fx, fy, cx, cy, c2w_est, device)  # Assuming self.device is defined
+    return point_3D_current, point_3D_prev, uv_prev_in_cur
