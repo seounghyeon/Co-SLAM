@@ -105,3 +105,11 @@ def l1_loss_3D(pred_3D, target_3D):
 
 
     return rgb_loss
+
+def l1_loss_2D(pred_3D, target_3D):
+
+    # Get render loss
+    rgb_loss = F.l1_loss(pred_3D, target_3D)
+
+
+    return rgb_loss

@@ -38,6 +38,12 @@ tracking:
   wait_iters: 100
   const_speed: True
   best: False
+  sift3d_color: 0.4 # 0.4 nice 0.8 und höher bad
+  sift3d_distance: 0.05
+  sift3d_sdf: 0
+  sift3d_supervis: 1
+  sift2d_color: 0.01    # 0.001 #0.005
+  sift2d_distance: 0.0005
 
 grid:
   enc: 'HashGrid'

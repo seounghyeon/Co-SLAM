@@ -15,75 +15,50 @@ SIFT Feature Matching Class
             - matches
 
 """
-class SIFTMatcher:
+class ORBMatcher:
     def __init__(self):
-        self.sift = cv2.SIFT_create()
-        self.brutef = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
-        self.device = torch.device("cuda")
+        self.orb = cv2.ORB.create()
+        self.bf = cv2.BFMatcher(cv2.NORM_HAMMING)
 
-
-    def match(self, image1in, image2in, idx, Hedge, Wedge, gt_color):
+    def match(self, image1, image2, idx, Hedge, Wedge, gt_color):
         # print("inside match")
 
         debug_uv = False
-        if image1in is None:
+        if image1 is None:
             print("\nTHIS IS NONE IN IMAGE1IN no previous image saved up\n\n")
             return None, None, None, None
-        # detach input images and change them from tensor to cv2 format
-        ############################################
-        # Detach the tensor from the GPU
-        image1in_cpu = image1in.cpu()
-        image2in_cpu = image2in.cpu()
+        
+        # Upload images to GPU memory
+        image1_gpu = cv2.cuda_GpuMat()
+        image2_gpu = cv2.cuda_GpuMat()
+        image1_gpu.upload(image1)
+        image2_gpu.upload(image2)
 
-        if (debug_uv):     
-            gt_color_cpu = gt_color.cpu()
-            np_gt_color = gt_color_cpu.numpy()
-            np_gt = np.clip(np_gt_color, 0, 1)
-            if np_gt.shape[0] == 3:
-                np_gt = np.transpose(np_gt, (1, 2, 0))
-            if np_gt.max() <= 1.0:
-                np_gt = (np_gt * 255).astype(np.uint8)
-
-        # Convert to NumPy arrays
-        np_img1 = image1in_cpu.numpy()
-        np_img2 = image2in_cpu.numpy()
-
-        # color is set from 0 to 1 to ensure range of intensity for the pixel is inside this valid range
-        np_img1 = np.clip(np_img1, 0, 1)
-        np_img2 = np.clip(np_img2, 0, 1)
-
-        if np_img1.shape[0] == 3:
-            np_img1 = np.transpose(np_img1, (1, 2, 0))
-        if np_img2.shape[0] == 3:
-            np_img2 = np.transpose(np_img2, (1, 2, 0))
-        # If color values are in [0,1], scale to [0,255]
-        if np_img1.max() <= 1.0:
-            np_img1 = (np_img1 * 255).astype(np.uint8)
-        if np_img2.max() <= 1.0:
-            np_img2 = (np_img2 * 255).astype(np.uint8)
-
-        image1 = np_img1
-        image2 = np_img2
-        ############################################
   
         debug = False
 
-        # Detect and compute keypoints and descriptors
-        keypoints_1, descriptors_1 = self.sift.detectAndCompute(image1, None)
-        keypoints_2, descriptors_2 = self.sift.detectAndCompute(image2, None)
+        # Detect ORB keypoints and descriptors
+        keypoints_1, descriptors_1 = self.orb.detectWithDescriptorsAsync(image1_gpu, None)
+        keypoints_2, descriptors_2 = self.orb.detectWithDescriptorsAsync(image2_gpu, None)
+
+        # Download keypoints and descriptors from GPU to CPU
+        keypoints_1 = keypoints_1.download()
+        keypoints_2 = keypoints_2.download()
+        descriptors_1 = descriptors_1.download()
+        descriptors_2 = descriptors_2.download()
 
         if descriptors_1 is None or descriptors_2 is None:
             return None, None, None, None, None, None, None, None
 
         # Create matches using brute force algorithm
-        matches = self.brutef.match(descriptors_1, descriptors_2)
+        matches = self.bf.match(descriptors_1, descriptors_2)
         # Sort matches by their distance
         matches = sorted(matches, key=lambda x: x.distance)
 
-        # matches saved in tensor
-        matches_tensor = torch.tensor([(match.queryIdx, match.trainIdx, match.distance) for match in matches], dtype=torch.float32)
-        if(debug):
-            print("size of matches",matches_tensor.size())
+        # # matches saved in tensor
+        # matches_tensor = torch.tensor([(match.queryIdx, match.trainIdx, match.distance) for match in matches], dtype=torch.float32)
+        # if(debug):
+        #     print("size of matches",matches_tensor.size())
 
         """
         UV NEEDS TO ADD 20 because the uv here starts at 0 but in reality it starts at 20

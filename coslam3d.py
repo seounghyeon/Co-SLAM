@@ -345,14 +345,12 @@ class CoSLAM():
         current_rays = current_rays.reshape(-1, current_rays.shape[-1])
         # prev rays are prev_rays_ba
 
-
-
-
         # # number if iterations to store in
-        # iters = index_full_cur // self.config['mapping']['min_pixels_cur']
-        # remainder = index_full_cur % self.config['mapping']['min_pixels_cur']
+        # iters = index_full_cur.numel() // self.config['mapping']['min_pixels_cur']
+        # remainder = index_full_cur.numel() % self.config['mapping']['min_pixels_cur']
         # if remainder > 0:
         #     iters += 1
+
         # add my rays to current rays
         min_pix = self.config['mapping']['min_pixels_cur']
         for i in range(self.config['mapping']['iters']):
@@ -363,42 +361,21 @@ class CoSLAM():
             rays, ids = self.keyframeDatabase.sample_global_rays(self.config['mapping']['sample'])
 
 
+            # if i < iters-1:     # i starts at 0
+            #     idx_cur = random.sample(range(0, self.dataset.H * self.dataset.W), max(self.config['mapping']['sample'] // len(self.keyframeDatabase.frame_ids), self.config['mapping']['min_pixels_cur']))
+            #     idx_cur[:min_pix] = index_full_cur[i*min_pix:(i+1)*min_pix-1].tolist()
+            # elif i == iters-1:
+            #     idx_cur = random.sample(range(0, self.dataset.H * self.dataset.W), max(self.config['mapping']['sample'] // len(self.keyframeDatabase.frame_ids), self.config['mapping']['min_pixels_cur']))
+            #     left_over = index_full_cur.numel() - (iters-1)*min_pix
+            #     idx_cur[:left_over] = index_full_cur[i*min_pix:i*min_pix+left_over-1].tolist()
+            # else:
+            #     idx_cur = random.sample(range(0, self.dataset.H * self.dataset.W), max(self.config['mapping']['sample'] // len(self.keyframeDatabase.frame_ids), self.config['mapping']['min_pixels_cur']))
 
-        
+
+
             #TODO: Checkpoint...
-            # starts sampling max #sample and less and less until min mixels cur
-            # add here samples from own feature matcher
-            if i == 0:
-                idx_cur = random.sample(range(0, self.dataset.H * self.dataset.W), max(self.config['mapping']['sample'] // len(self.keyframeDatabase.frame_ids), self.config['mapping']['min_pixels_cur']))
-                index_size = index_full_cur.size()[0]
-                if index_size < min_pix:
-                    idx_cur[:index_size] = index_full_cur[:index_size].tolist()
-                else:
-                    idx_cur[:min_pix] = index_full_cur[:min_pix].tolist()
-
-            elif i == 1 and index_size > min_pix:
-                # Ensure all elements from index_full_cur are included if index_size is larger than min_pixels_cur
-                remaining_indices = index_full_cur[min_pix:]
-                index_size_rem = remaining_indices.size()[0]
-                idx_cur = random.sample(range(0, self.dataset.H * self.dataset.W), max(self.config['mapping']['sample'] // len(self.keyframeDatabase.frame_ids), self.config['mapping']['min_pixels_cur']))
-                if index_size_rem < min_pix:
-                    idx_cur[:index_size_rem] = index_full_cur[min_pix:min_pix+index_size_rem].tolist()
-                else:
-                    idx_cur[:index_size_rem] = index_full_cur[min_pix:2*min_pix].tolist()
-            elif i == 2 and index_size > 2 * min_pix:
-                # Ensure all elements from index_full_cur are included if index_size is larger than 2 * min_pixels_cur
-                remaining_indices = index_full_cur[2 * min_pix:]
-                index_size_rem = remaining_indices.size()[0]
-                idx_cur = random.sample(range(0, self.dataset.H * self.dataset.W), max(self.config['mapping']['sample'] // len(self.keyframeDatabase.frame_ids), self.config['mapping']['min_pixels_cur']))
-                idx_cur[:index_size_rem] = index_full_cur[2*min_pix:2*min_pix+index_size_rem].tolist()
-
-            else:
-                idx_cur = random.sample(range(0, self.dataset.H * self.dataset.W), max(self.config['mapping']['sample'] // len(self.keyframeDatabase.frame_ids), self.config['mapping']['min_pixels_cur']))
-
-
-            # need prev rays from batch direction rgb depth
+            idx_cur = random.sample(range(0, self.dataset.H * self.dataset.W),max(self.config['mapping']['sample'] // len(self.keyframeDatabase.frame_ids), self.config['mapping']['min_pixels_cur']))
             current_rays_batch = current_rays[idx_cur, :]
-
 
             rays = torch.cat([rays, current_rays_batch], dim=0) # N, 7
             ids_all = torch.cat([ids//self.config['mapping']['keyframe_every'], -torch.ones((len(idx_cur)))]).to(torch.int64)
@@ -416,51 +393,7 @@ class CoSLAM():
             ret = self.model.forward(rays_o, rays_d, target_s, target_d, 0, False)
 
             loss = self.get_loss_from_ret(ret, smooth=True)
-
-
-            # # current previous ray loss
-            # #######################
-            # cur_rays_sift = current_rays[index_full_cur, :]
-            # prev_rays_sift = prev_rays_ba[index_full_prev, :]
-            # cur_rays_d_cam = cur_rays_sift[..., :3].to(self.device)
-            # cur_target_s = cur_rays_sift[..., 3:6].to(self.device)
-            # cur_target_d = cur_rays_sift[..., 6:7].to(self.device)
-            # prev_rays_d_cam = prev_rays_sift[..., :3].to(self.device)
-            # prev_target_s = prev_rays_sift[..., 3:6].to(self.device)
-            # prev_target_d = prev_rays_sift[..., 6:7].to(self.device)
-
-            # prev_c2w = self.est_c2w_data[cur_frame_id-1].clone().detach().unsqueeze(0)
-            # cur_c2w = self.est_c2w_data[cur_frame_id].unsqueeze(0)
-            # rays_d_cur = torch.sum(cur_rays_d_cam[..., None, :] * cur_c2w[:, :3, :3], -1)
-            # rays_o_cur = cur_c2w[...,:3, -1].repeat(index_full_cur.numel(), 1)
-            # # previous rays and target color depth
-            # rays_d_prev = torch.sum(prev_rays_d_cam[..., None, :] * prev_c2w[:, :3, :3], -1)
-            # rays_o_prev = prev_c2w[...,:3, -1].repeat(index_full_prev.numel(), 1)
-            # # uv prev in cur point 3D
-            # point_3D_current = ray_to_3D(rays_o_cur, rays_d_cur, cur_target_d.squeeze(), batch['depth'].squeeze(0))
-            # point_3D_prev = ray_to_3D(rays_o_prev, rays_d_prev, prev_target_d.squeeze(), depth_prev.squeeze(0))
-            # # uv_prev_in_cur = proj_3D_2D_cur(point_3D_prev, W1, H0, Wedge, fx, fy, cx, cy, c2w_est, self.device)  # is float
-            # # get previous color and sdf from point
-            # prev_pts_flat = (point_3D_prev - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
-            # prev_point_eval = self.model.query_color_sdf(prev_pts_flat)
-            # prev_sdf_eval = prev_point_eval[:, -1]
-            # prev_rgb_eval = torch.sigmoid(prev_point_eval[:,:3])
-            # prev_sdf_eval_c = prev_sdf_eval.clone().detach()
-            # prev_rgb_eval_c = prev_rgb_eval.clone().detach()
-
-            # # get current color and sdf from point
-            # cur_pts_flat = (point_3D_current - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
-            # cur_point_eval = self.model.query_color_sdf(cur_pts_flat)
-            # cur_sdf_eval = cur_point_eval[:, -1]
-            # cur_rgb_eval = torch.sigmoid(cur_point_eval[:,:3])
- 
-            # loss_3d_color = l1_loss_mask(cur_rgb_eval, prev_rgb_eval_c, cur_target_d, self.config['training']['rgb_missing'], self.config['training']['trunc']) * 0.01 # 0.1=>500 0.00349 ysterday 0.01=>0.0049
-            # loss_3d_distance = l1_loss_3D(point_3D_current, point_3D_prev)
-
-            # loss_3d_sdf = loss_sdf(cur_sdf_eval, prev_sdf_eval_c, self.config['training']['sdf_weight'], self.config['training']['trunc']) * 0.0000001     # * 0.000005 not that useful 
-            # loss_total = loss + loss_3d_color + loss_3d_sdf
-            # #######################
-
+            
             loss.backward(retain_graph=True)
             
             if (i + 1) % cfg["mapping"]["map_accum_step"] == 0:
@@ -516,7 +449,7 @@ class CoSLAM():
 
     
     
-    def tracking_render(self, batch, sample_points, frame_id, index_cur, index_prev, rgb_prev, depth_prev, direction_prev, W1, H0, Wedge, fx, fy, cx, cy, uv_cur):
+    def tracking_render(self, batch, sample_points, frame_id, index_cur, index_prev, rgb_prev, depth_prev, direction_prev, W1, H0, Wedge, fx, fy, cx, cy, uv_cur, no_sift):
         '''
         Tracking camera pose using of the current frame
         Params:
@@ -554,93 +487,113 @@ class CoSLAM():
             c2w_est = self.matrix_from_tensor(cur_rot, cur_trans)
             # Note here we fix the sampled points for optimisation
             # Original and current rays and target 
-            if indice is None:
-                indice = self.select_samples(self.dataset.H-iH*2, self.dataset.W-iW*2, self.config['tracking']['sample'])
-                indice = torch.cat((indice, index_cur))             # index added
-                # Slicing                
 
-                indice_w, indice_h = indice % (self.dataset.W - iW * 2), indice // (self.dataset.W - iW * 2)
-                rays_d_cam = batch['direction'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device)
+            if no_sift is False:
+                if indice is None:
+                    indice = self.select_samples(self.dataset.H-iH*2, self.dataset.W-iW*2, self.config['tracking']['sample'])
+                    indice = torch.cat((indice, index_cur))             # index added
+                    # Slicing                
 
-
-                indice_w_prev, indice_h_prev = index_prev % (self.dataset.W - iW * 2), index_prev // (self.dataset.W - iW * 2)
-                rays_d_cam_prev = direction_prev.squeeze(0)[iH:-iH, iW:-iW, :][indice_h_prev, indice_w_prev, :].to(self.device)             
-            target_s = batch['rgb'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device)
-            target_d = batch['depth'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
-            rays_o = c2w_est[...,:3, -1].repeat(self.config['tracking']['sample']+ index_cur.numel(), 1)
-            rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1)
-
-            # current rays and target color depth
-            rays_o_cur = rays_o[self.config['tracking']['sample']:]
-            rays_d_cur = rays_d[self.config['tracking']['sample']:]
-            target_s_cur = target_s[self.config['tracking']['sample']:]
-            target_d_cur = target_d[self.config['tracking']['sample']:]
-
-            # previous rays and target color depth
-            rays_o_prev = prev_c2w[...,:3, -1].repeat(index_prev.numel(), 1)
-            rays_d_prev = torch.sum(rays_d_cam_prev[..., None, :] * prev_c2w[:, :3, :3], -1)
-            target_s_prev = rgb_prev.squeeze(0)[iH:-iH, iW:-iW, :][indice_h_prev, indice_w_prev, :].to(self.device)
-            target_d_prev = depth_prev.squeeze(0)[iH:-iH, iW:-iW][indice_h_prev, indice_w_prev].to(self.device).unsqueeze(-1)
-
-            # uv prev in cur point 3D
-            point_3D_current = ray_to_3D(rays_o_cur, rays_d_cur, target_d_cur.squeeze(), batch['depth'].squeeze(0)[iH:-iH, iW:-iW])
-            point_3D_prev = ray_to_3D(rays_o_prev, rays_d_prev, target_d_prev.squeeze(), depth_prev.squeeze(0)[iH:-iH, iW:-iW])
-            uv_prev_in_cur = proj_3D_2D_cur(point_3D_prev, W1, H0, Wedge, fx, fy, cx, cy, c2w_est, self.device)  # is float
-
-            # prev in cur rays and target color depth
-            index_pic, pic_filtered = uv_to_index(uv_prev_in_cur, self.dataset.W - iW * 2, self.dataset.H-iH*2)
-            indice_w_pic, indice_h_pic = index_pic % (self.dataset.W - iW * 2), index_pic // (self.dataset.W - iW * 2)
-            rays_d_cam_pic = batch['direction'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h_pic, indice_w_pic, :].to(self.device)
-            rays_o_pic = c2w_est[...,:3, -1].repeat(index_pic.numel(), 1)
-            rays_d_pic = torch.sum(rays_d_cam_pic[..., None, :] * c2w_est[:, :3, :3], -1)
-            target_s_pic = batch['rgb'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h_pic, indice_w_pic, :].to(self.device)
-            target_d_pic = batch['depth'].squeeze(0)[iH:-iH, iW:-iW][indice_h_pic, indice_w_pic].to(self.device).unsqueeze(-1)
-
-            # filter if uv re projected is not on new frame
-            if pic_filtered.numel() != 0: # if to delete 
-                point_3D_prev = filter_3D_points(pic_filtered, point_3D_prev)
-                target_d_cur = filter_3D_points(pic_filtered, target_d_cur)
-                point_3D_current = filter_3D_points(pic_filtered, point_3D_current)
-
-            rays_o = torch.cat((rays_o, rays_o_pic))
-            rays_d = torch.cat((rays_d, rays_d_pic))
-            target_s = torch.cat((target_s, target_s_pic))
-            target_d = torch.cat((target_d, target_d_pic))
-
-            # model rgb depth 
-            # target_s and d, rays o and d: original, current, prev_in_cur
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d, sample_points, True)
+                    indice_w, indice_h = indice % (self.dataset.W - iW * 2), indice // (self.dataset.W - iW * 2)
+                    rays_d_cam = batch['direction'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device)
 
 
-            loss = self.get_loss_from_ret(ret)
-            
+                    indice_w_prev, indice_h_prev = index_prev % (self.dataset.W - iW * 2), index_prev // (self.dataset.W - iW * 2)
+                    rays_d_cam_prev = direction_prev.squeeze(0)[iH:-iH, iW:-iW, :][indice_h_prev, indice_w_prev, :].to(self.device)             
+                target_s = batch['rgb'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device)
+                target_d = batch['depth'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
+                rays_o = c2w_est[...,:3, -1].repeat(self.config['tracking']['sample']+ index_cur.numel(), 1)
+                rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1)
+
+                # current rays and target color depth
+                rays_o_cur = rays_o[self.config['tracking']['sample']:]
+                rays_d_cur = rays_d[self.config['tracking']['sample']:]
+                target_s_cur = target_s[self.config['tracking']['sample']:]
+                target_d_cur = target_d[self.config['tracking']['sample']:]
+
+                # previous rays and target color depth
+                rays_o_prev = prev_c2w[...,:3, -1].repeat(index_prev.numel(), 1)
+                rays_d_prev = torch.sum(rays_d_cam_prev[..., None, :] * prev_c2w[:, :3, :3], -1)
+                target_s_prev = rgb_prev.squeeze(0)[iH:-iH, iW:-iW, :][indice_h_prev, indice_w_prev, :].to(self.device)
+                target_d_prev = depth_prev.squeeze(0)[iH:-iH, iW:-iW][indice_h_prev, indice_w_prev].to(self.device).unsqueeze(-1)
+
+                # uv prev in cur point 3D
+                # print("sizes ", target_d_cur.squeeze(dim=1).shape, target_d_prev.squeeze(dim=1).shape)
+                point_3D_current = ray_to_3D(rays_o_cur, rays_d_cur, target_d_cur.squeeze(dim=1), batch['depth'].squeeze(0)[iH:-iH, iW:-iW])
+                point_3D_prev = ray_to_3D(rays_o_prev, rays_d_prev, target_d_prev.squeeze(dim=1), depth_prev.squeeze(0)[iH:-iH, iW:-iW])
+                uv_prev_in_cur = proj_3D_2D_cur(point_3D_prev, W1, H0, Wedge, fx, fy, cx, cy, c2w_est, self.device)  # is float
+
+                # prev in cur rays and target color depth
+                index_pic, pic_filtered = uv_to_index(uv_prev_in_cur, self.dataset.W - iW * 2, self.dataset.H-iH*2)
+                indice_w_pic, indice_h_pic = index_pic % (self.dataset.W - iW * 2), index_pic // (self.dataset.W - iW * 2)
+                rays_d_cam_pic = batch['direction'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h_pic, indice_w_pic, :].to(self.device)
+                rays_o_pic = c2w_est[...,:3, -1].repeat(index_pic.numel(), 1)
+                rays_d_pic = torch.sum(rays_d_cam_pic[..., None, :] * c2w_est[:, :3, :3], -1)
+                target_s_pic = batch['rgb'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h_pic, indice_w_pic, :].to(self.device)
+                target_d_pic = batch['depth'].squeeze(0)[iH:-iH, iW:-iW][indice_h_pic, indice_w_pic].to(self.device).unsqueeze(-1)
+
+                # filter if uv re projected is not on new frame
+                if pic_filtered.numel() != 0: # if to delete 
+                    point_3D_prev = filter_3D_points(pic_filtered, point_3D_prev)
+                    target_d_cur = filter_3D_points(pic_filtered, target_d_cur)
+                    point_3D_current = filter_3D_points(pic_filtered, point_3D_current)
+
+                rays_o = torch.cat((rays_o, rays_o_pic))
+                rays_d = torch.cat((rays_d, rays_d_pic))
+                target_s = torch.cat((target_s, target_s_pic))
+                target_d = torch.cat((target_d, target_d_pic))
+
+                # model rgb depth 
+                # target_s and d, rays o and d: original, current, prev_in_cur
+                ret = self.model.forward(rays_o, rays_d, target_s, target_d, sample_points, True)
 
 
-            # get previous color and sdf from point
-            prev_pts_flat = (point_3D_prev - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
-            prev_point_eval = self.model.query_color_sdf(prev_pts_flat)
-            prev_sdf_eval = prev_point_eval[:, -1]
-            prev_rgb_eval = torch.sigmoid(prev_point_eval[:,:3])
-            prev_sdf_eval_c = prev_sdf_eval.clone().detach()
-            prev_rgb_eval_c = prev_rgb_eval.clone().detach()
+                loss = self.get_loss_from_ret(ret) * self.config['tracking']['sift3d_supervis']
+                
+
+
+                # get previous color and sdf from point
+                prev_pts_flat = (point_3D_prev - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
+                prev_point_eval = self.model.query_color_sdf(prev_pts_flat)
+                prev_sdf_eval = prev_point_eval[:, -1]
+                prev_rgb_eval = torch.sigmoid(prev_point_eval[:,:3])
+                prev_sdf_eval_c = prev_sdf_eval.clone().detach()
+                prev_rgb_eval_c = prev_rgb_eval.clone().detach()
 
 
 
-            # get current color and sdf from point
-            cur_pts_flat = (point_3D_current - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
-            cur_point_eval = self.model.query_color_sdf(cur_pts_flat)
-            cur_sdf_eval = cur_point_eval[:, -1]
-            cur_rgb_eval = torch.sigmoid(cur_point_eval[:,:3])
+                # get current color and sdf from point
+                cur_pts_flat = (point_3D_current - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
+                cur_point_eval = self.model.query_color_sdf(cur_pts_flat)
+                cur_sdf_eval = cur_point_eval[:, -1]
+                cur_rgb_eval = torch.sigmoid(cur_point_eval[:,:3])
 
 
-            loss_3d_color = l1_loss_mask(cur_rgb_eval, prev_rgb_eval_c, target_d_cur, self.config['training']['rgb_missing'], self.config['training']['trunc']) * 0.05 # 0.1=>500 0.00349 ysterday 0.01=>0.0049
-            # loss_3d_distance = torch.abs(point_3D_current - point_3D_prev).mean() *0.02  #     * 0.2
-            loss_3d_distance = l1_loss_3D(point_3D_current, point_3D_prev) * 0.05
-            # print("loss_3D_distance ", loss_3d_distance*1000)
-            loss_3d_sdf = loss_sdf(cur_sdf_eval, prev_sdf_eval_c, self.config['training']['sdf_weight'], self.config['training']['trunc']) * 0.0000001     # * 0.000005 not that useful 
-            # total_loss = loss + loss_3d_color + loss_3d_distance + loss_3d_sdf
-            total_loss = loss + loss_3d_distance + loss_3d_sdf + loss_3d_color
+                loss_3d_color = l1_loss_mask(cur_rgb_eval, prev_rgb_eval_c, target_d_cur, self.config['training']['rgb_missing'], self.config['training']['trunc']) * self.config['tracking']['sift3d_color'] # 0.1=>500 0.00349 ysterday 0.01=>0.0049
+                # loss_3d_distance = torch.abs(point_3D_current - point_3D_prev).mean() *0.02  #     * 0.2
+                loss_3d_distance = l1_loss_3D(point_3D_current, point_3D_prev) * self.config['tracking']['sift3d_distance']
+                # print("loss_3D_distance ", loss_3d_distance*1000)
+                loss_3d_sdf = loss_sdf(cur_sdf_eval, prev_sdf_eval_c, self.config['training']['sdf_weight'], self.config['training']['trunc']) * self.config['tracking']['sift3d_sdf']   # * 0.000005 not that useful 
+                # total_loss = loss + loss_3d_color + loss_3d_distance + loss_3d_sdf
+                total_loss = loss + loss_3d_color + loss_3d_distance + loss_3d_sdf
 
+            else:
+                # Note here we fix the sampled points for optimisation
+                if indice is None:
+                    indice = self.select_samples(self.dataset.H-iH*2, self.dataset.W-iW*2, self.config['tracking']['sample'])
+                
+                    # Slicing
+                    indice_h, indice_w = indice % (self.dataset.H - iH * 2), indice // (self.dataset.H - iH * 2)
+                    rays_d_cam = batch['direction'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device)
+                target_s = batch['rgb'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device)
+                target_d = batch['depth'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
+
+                rays_o = c2w_est[...,:3, -1].repeat(self.config['tracking']['sample'], 1)
+                rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1)
+
+                ret = self.model.forward(rays_o, rays_d, target_s, target_d, sample_points, False)
+                loss = self.get_loss_from_ret(ret)
+                total_loss = loss
             # print("color distance sdf loss ", loss_3d_color, loss_3d_distance, loss_3d_sdf, loss)
 
 
@@ -746,7 +699,7 @@ class CoSLAM():
         Wedge = self.ignore_edge_W
         Hedge = self.ignore_edge_H
 
-
+        no_sift = False
         # print("H W ", self.dataset.H, self.dataset.W)
 
         H0 = Hedge 
@@ -774,7 +727,6 @@ class CoSLAM():
             # gt_color = rgb
             gt_color = torch.tensor(rgb, dtype=torch.float32)
             gt_color = gt_color.to(device='cuda:0')
-
 
 
             # Visualisation
@@ -815,11 +767,11 @@ class CoSLAM():
 
 
                 uv_prev, uv_cur, index_prev, index_cur, colors_cur, colors_prev, index_full_cur, index_full_prev = sift_matcher.match(gt_color_prev_clone, gt_color_clone, i, Hedge, Wedge, gt_color)
-                print("features ", index_cur.numel())
-
+                if uv_cur is None and uv_prev is None:
+                    no_sift = True
                 if self.config['tracking']['iter_point'] > 0:
                     self.tracking_pc(batch, i)
-                self.tracking_render(batch, sample_points, i, index_cur, index_prev, rgb_prev, depth_prev, direction_prev, W1, H0, Wedge, fx, fy, cx, cy, uv_cur)
+                self.tracking_render(batch, sample_points, i, index_cur, index_prev, rgb_prev, depth_prev, direction_prev, W1, H0, Wedge, fx, fy, cx, cy, uv_cur, no_sift)
 
                 if i%self.config['mapping']['map_every']==0:
                     self.current_frame_mapping(batch, sample_points, i)

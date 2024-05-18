@@ -264,7 +264,7 @@ class JointEncoding(nn.Module):
             ret['z_std'] = torch.std(z_samples, dim=-1, unbiased=False)
 
         return ret
-    
+
     def forward(self, rays_o, rays_d, target_rgb, target_d, batch_size, TR, global_step=0):
         '''
         Params:
